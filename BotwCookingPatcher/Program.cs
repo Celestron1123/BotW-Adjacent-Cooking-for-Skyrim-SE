@@ -24,12 +24,21 @@ public enum IngredientType
     Catalyst // Flour; lengthens the duration of buffers
 }
 
+// A simple struct to hold the relevant data for each ingredient/food item we want to use in the combinations
 public struct CookingItem
 {
     public string Name;
     public FormKey Id;
     public IReadOnlyList<IEffectGetter> Effects;
     public IngredientType Type;
+}
+
+// A simple struct to hold the relevant data for the effects we want to apply to the generated food items
+public struct BufferEffectData
+{
+    public FormKey EffectId;
+    public float Magnitude;
+    public int Duration;
 }
 
 // Main Program
@@ -155,25 +164,106 @@ public class Program
         Console.WriteLine("\nGenerating Plugin Records...");
         var patchMod = new SkyrimMod(ModKey.FromNameAndExtension("BotwCooking.esp"), SkyrimRelease.SkyrimSE);
 
-        // static FormKeys for the Cooking Pot and the Restore Health effect
+        // static FormKey for the Cooking Pot
         var cookingPotKeyword = new FormKey("Skyrim.esm", 0x0A5CB3);
-        var restoreHealthEffect = new FormKey("Skyrim.esm", 0x03EB15);
+
+        // static FormKeys for all other effects via buffers
+        var effectRestoreHealth = new FormKey("Skyrim.esm", 0x03EB15); // AlchRestoreHealth
+        var effectStaminaRegen = new FormKey("Skyrim.esm", 0x03EBA3); // AlchRegenStamina
+        var effectCarryWeight = new FormKey("Skyrim.esm", 0x03EB01); // AlchFortifyCarryWeight
+        var effectArcheryUp = new FormKey("Skyrim.esm", 0x03EB0D); // AlchFortifyMarksman
+        var effectResistPoison = new FormKey("Skyrim.esm", 0x03EAE6); // AlchResistPoison
+        var effectFortifyArmor = new FormKey("Skyrim.esm", 0x03EAE9); // AlchFortifyHeavyArmor
+        var effectHealthRegen = new FormKey("Skyrim.esm", 0x03EB17); // AlchRegenHealth
+        var effectFortifyStam = new FormKey("Skyrim.esm", 0x03EBA5); // AlchFortifyStamina
+        var effectResistFrost = new FormKey("Skyrim.esm", 0x03EAE3); // AlchResistFrost
+        var effectFortifyMag = new FormKey("Skyrim.esm", 0x03EAEB); // AlchFortifyMagicka
+        var effectFortifyMelee = new FormKey("Skyrim.esm", 0x03EB0B); // AlchFortifyOneHanded 
+        var effectWaterbreath = new FormKey("Skyrim.esm", 0x03EAC1); // AlchWaterbreathing
+        var effectResistFire = new FormKey("Skyrim.esm", 0x03EAE1); // AlchResistFire
+
+        // TODO: make a mapping for price?
+        // A simple mapping of filler ingredients to their HP values for the Restore Health effect magnitude calculation
+        var fillerHpValues = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Mammoth Snout", 60 },
+            { "Raw Beef", 25 }, { "Venison", 25 },
+            { "Horse Meat", 20 }, { "Leg of Goat", 20 },
+            { "Chicken Breast", 15 }, { "Pheasant Breast", 15 }, { "Raw Rabbit Leg", 15 },
+            { "Potato", 10 }, { "Red Apple", 10 }
+        };
+
+        // A mapping of buffer ingredients to their corresponding effects, magnitudes, and durations
+        var bufferData = new Dictionary<string, BufferEffectData>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Ale", new BufferEffectData                   { EffectId = effectStaminaRegen,    Magnitude = 15, Duration = 60 } },
+            { "Cabbage", new BufferEffectData               { EffectId = effectCarryWeight,     Magnitude = 15, Duration = 90 } },
+            { "Carrot", new BufferEffectData                { EffectId = effectArcheryUp,       Magnitude = 5,  Duration = 60 } },
+            { "Charred Skeever Hide", new BufferEffectData  { EffectId = effectResistPoison,    Magnitude = 30, Duration = 60 } },
+            { "Eidar Cheese Wheel", new BufferEffectData    { EffectId = effectFortifyArmor,    Magnitude = 15, Duration = 90 } },
+            { "Garlic", new BufferEffectData                { EffectId = effectHealthRegen,     Magnitude = 15, Duration = 60 } },
+            { "Green Apple", new BufferEffectData           { EffectId = effectFortifyStam,     Magnitude = 15, Duration = 60 } },
+            { "Horker Meat", new BufferEffectData           { EffectId = effectResistFrost,     Magnitude = 15, Duration = 90 } },
+            { "Leek", new BufferEffectData                  { EffectId = effectFortifyMag,      Magnitude = 15, Duration = 60 } },
+            { "Mudcrab Legs", new BufferEffectData          { EffectId = effectFortifyMelee,    Magnitude = 15, Duration = 60 } },
+            { "Salmon Meat", new BufferEffectData           { EffectId = effectWaterbreath,     Magnitude = 1,  Duration = 30 } },
+            { "Tomato", new BufferEffectData                { EffectId = effectResistFire,      Magnitude = 15, Duration = 90 } }
+        };
 
         int recipeCount = 0;
 
         foreach (var combo in filteredCombinations)
         {
             if (combo.Count == 0) continue;
-
             recipeCount++;
+
+            // --- DYNAMIC EFFECT CALCULATION ---
+            int totalHp = 0;
+            float buffMagnitude = 0;
+            int buffDuration = 0;
+            FormKey? activeBuffId = null;
+            int flourCount = 0;
+
+            foreach (var item in combo)
+            {
+                if (item.Type == IngredientType.Filler)
+                {
+                    totalHp += fillerHpValues.TryGetValue(item.Name, out int hp) ? hp : 1; //TODO: maybe delete this after testing
+                    if (hp == 1)
+                    {
+                        Console.WriteLine($"Warning: {item.Name} not found in HP mapping, defaulting to 1 HP.");
+                    }
+                }
+                else if (item.Type == IngredientType.Buffer)
+                {
+                    totalHp += 10; // Base HP for all buffers
+                    if (bufferData.TryGetValue(item.Name, out var bData))
+                    {
+                        activeBuffId = bData.EffectId;
+                        buffMagnitude += bData.Magnitude;
+                        buffDuration += bData.Duration;
+                    }
+                }
+                else if (item.Type == IngredientType.Catalyst)
+                {
+                    totalHp += 5;
+                    flourCount++;
+                }
+            }
+
+            // Apply the Flour Multiplier (2.5x per flour)
+            if (flourCount > 0 && activeBuffId != null)
+            {
+                double multiplier = Math.Pow(2.5, flourCount);
+                buffDuration = (int)(buffDuration * multiplier);
+            }
 
             // --- CREATE THE NEW FOOD ITEM ---
             var newFood = patchMod.Ingestibles.AddNew();
             newFood.EditorID = $"BOTW_Food_{recipeCount}";
             newFood.Name = GenerateMealName(combo);
-            newFood.Weight = combo.Count * 0.5f;
-            newFood.Value = (uint)(combo.Count * 15);
-            // newFood.Model = new Model { File = "clutter\\food\\potatobaked.nif" }; //TODO: make these dynamic
+            newFood.Weight = combo.Count * 0.5f; // TODO: make this dynamic
+            newFood.Value = (uint)(combo.Count * 15); // TODO: make this dynamic
             // TODO: check if this works lol - also look into sorting meals so that the model prefers Meat -> Veggies -> Flour
             var primeIngredientKey = combo[0].Id;
             if (patchMod.Ingestibles.TryGetValue(primeIngredientKey, out var vanillaFood) && vanillaFood.Model != null)
@@ -184,17 +274,33 @@ public class Program
             else
             {
                 newFood.Model = new Model { File = @"clutter\food\potatobaked.nif" };
+                // NOTE: THIS DOES NOT WORK I'M COMMENTING THIS OUT BECAUSE THE OUTPUT LOG IS HUGE
+                //Console.WriteLine($"Warning: {combo[0].Name} does not have a model to copy, using fallback."); // TODO: delete after testing
             }
             newFood.Flags |= Ingestible.Flag.FoodItem;
 
-            var effect = new Effect();
-            effect.BaseEffect.SetTo(restoreHealthEffect);
-            effect.Data = new EffectData()
+            // Attach Base Health Effect
+            var hpEffect = new Effect();
+            hpEffect.BaseEffect.SetTo(effectRestoreHealth);
+            hpEffect.Data = new EffectData()
             {
-                Magnitude = 10 * combo.Count,
+                Magnitude = totalHp,
                 Duration = 0
             };
-            newFood.Effects.Add(effect);
+            newFood.Effects.Add(hpEffect);
+
+            // Attach Status Effect (if applicable)
+            if (activeBuffId.HasValue)
+            {
+                var statusEffect = new Effect();
+                statusEffect.BaseEffect.SetTo(activeBuffId.Value);
+                statusEffect.Data = new EffectData()
+                {
+                    Magnitude = buffMagnitude,
+                    Duration = buffDuration
+                };
+                newFood.Effects.Add(statusEffect);
+            }
 
             // --- CREATE THE RECIPE ---
             var newRecipe = patchMod.ConstructibleObjects.AddNew();
