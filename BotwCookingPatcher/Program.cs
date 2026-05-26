@@ -24,6 +24,12 @@ public enum IngredientType
     Catalyst // Flour; lengthens the duration of buffers
 }
 
+// An enum that categorizes ingredients into broad culinary types for more flavorful meal name generation
+public enum CulinaryTag
+{
+    Meat, Seafood, Fruit, Vegetable, Tuber, Dairy, Aromatic, Grain, Drink, Monster
+}
+
 // A simple struct to hold the relevant data for each ingredient/food item we want to use in the combinations
 public struct CookingItem
 {
@@ -32,6 +38,7 @@ public struct CookingItem
     public IReadOnlyList<IEffectGetter> Effects;
     public IngredientType Type;
     public Model? ModelData;
+    public CulinaryTag Tag;
 }
 
 // A simple struct to hold the relevant data for the effects we want to apply to the generated food items
@@ -45,6 +52,16 @@ public struct BufferEffectData
 // Main Program
 public class Program
 {
+    // The meal name prefix Dictionary
+    private static readonly Dictionary<string, string> BufferPrefixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "Ale", "Invigorating" }, { "Cabbage", "Enduring" }, { "Carrot", "Keen-Eyed" },
+        { "Charred Skeever Hide", "Gritty" }, { "Eidar Cheese Wheel", "Ironclad" },
+        { "Garlic", "Revitalizing" }, { "Green Apple", "Tireless" }, { "Horker Meat", "Warming" },
+        { "Leek", "Mystic" }, { "Mudcrab Legs", "Mighty" }, { "Salmon Meat", "Amphibious" },
+        { "Tomato", "Cooling" }
+    };
+
     // Entry Point
     public static void Main()
     {
@@ -73,6 +90,8 @@ public class Program
         targetNames.Add("Sack of Flour");
 
         var validIngredients = new List<CookingItem>();
+        Model? universalMealModel = null;
+        var stewFormKey = new FormKey("Skyrim.esm", 0x000EBA01);
 
         // --- DATA INGESTION ---
         // Load the plugins and extract the relevant ingredients and food items
@@ -81,6 +100,15 @@ public class Program
             var pluginPath = Path.Combine(dataPath, pluginName);
             Console.WriteLine($"Parsing {pluginName}...");
             var mod = SkyrimMod.CreateFromBinary(pluginPath, SkyrimRelease.SkyrimSE);
+
+            if (pluginName == "Skyrim.esm")
+            {
+                if (mod.Ingestibles.TryGetValue(stewFormKey, out var appleCabbageStew) && appleCabbageStew.Model != null)
+                {
+                    universalMealModel = appleCabbageStew.Model.DeepCopy();
+                    Console.WriteLine("Successfully cached Apple Cabbage Stew model.");
+                }
+            }
 
             // Scan the Food table
             foreach (var food in mod.Ingestibles)
@@ -93,7 +121,8 @@ public class Program
                         Id = food.FormKey,
                         Effects = food.Effects,
                         Type = DetermineType(food.Name.String, fillers, buffers),
-                        ModelData = food.Model?.DeepCopy()
+                        ModelData = food.Model?.DeepCopy(),
+                        Tag = DetermineTag(food.Name.String)
                     });
                     Console.WriteLine($"Ingested Food: {food.Name} ({validIngredients.Last().Type})");
                 }
@@ -110,7 +139,8 @@ public class Program
                         Id = ingredient.FormKey,
                         Effects = ingredient.Effects,
                         Type = DetermineType(ingredient.Name.String, fillers, buffers),
-                        ModelData = ingredient.Model?.DeepCopy()
+                        ModelData = ingredient.Model?.DeepCopy(),
+                        Tag = DetermineTag(ingredient.Name.String)
                     });
                     Console.WriteLine($"Ingested Ingredient: {ingredient.Name} ({validIngredients.Last().Type})");
                 }
@@ -145,13 +175,6 @@ public class Program
         var filteredCombinations = rawCombinations.Where(IsValidCombination).ToList();
         Console.WriteLine($"Filtered down to {filteredCombinations.Count} valid recipe combinations!");
 
-        // For demonstration, print 10 combinations after index 100
-        Console.WriteLine("\nSample Combinations:");
-        for (int i = 100; i < Math.Min(110, filteredCombinations.Count); i++)
-        {
-            Console.WriteLine($"  {string.Join(", ", filteredCombinations[i].Select(x => x.Name))}");
-        }
-
         // Time to generate plugin records
         Console.WriteLine("\nGenerating Plugin Records...");
         var patchMod = new SkyrimMod(ModKey.FromNameAndExtension("BotwCooking.esp"), SkyrimRelease.SkyrimSE);
@@ -173,6 +196,24 @@ public class Program
         var effectFortifyMelee = new FormKey("Skyrim.esm", 0x03EB0B); // AlchFortifyOneHanded 
         var effectWaterbreath = new FormKey("Skyrim.esm", 0x03EAC1); // AlchWaterbreathing
         var effectResistFire = new FormKey("Skyrim.esm", 0x03EAE1); // AlchResistFire
+
+        // CSV Output for Testing
+        var effectNames = new Dictionary<FormKey, string>()
+        {
+            { effectRestoreHealth, "Restore Health" },
+            { effectStaminaRegen, "Regenerate Stamina" },
+            { effectCarryWeight, "Fortify Carry Weight" },
+            { effectArcheryUp, "Fortify Marksman" },
+            { effectResistPoison, "Resist Poison" },
+            { effectFortifyArmor, "Fortify Heavy Armor" },
+            { effectHealthRegen, "Regenerate Health" },
+            { effectFortifyStam, "Fortify Stamina" },
+            { effectResistFrost, "Resist Frost" },
+            { effectFortifyMag, "Fortify Magicka" },
+            { effectFortifyMelee, "Fortify One-Handed" },
+            { effectWaterbreath, "Waterbreathing" },
+            { effectResistFire, "Resist Fire" }
+        };
 
         // TODO: make a mapping for price?
         // A simple mapping of filler ingredients to their HP values for the Restore Health effect magnitude calculation
@@ -201,6 +242,11 @@ public class Program
             { "Salmon Meat", new BufferEffectData           { EffectId = effectWaterbreath,     Magnitude = 1,  Duration = 30 } },
             { "Tomato", new BufferEffectData                { EffectId = effectResistFire,      Magnitude = 15, Duration = 90 } }
         };
+
+        // --- ADD CSV SETUP ---
+        var csvPath = Path.Combine(desktopPath, "GeneratedMeals.csv");
+        using var csvWriter = new StreamWriter(csvPath);
+        csvWriter.WriteLine("MealName,+HP,Effect,EffectMagnitude,EffectDuration,Ingredient1,Ingredient2,Ingredient3,Weight,Price");
 
         int recipeCount = 0;
 
@@ -257,19 +303,20 @@ public class Program
             newFood.Name = GenerateMealName(combo);
             newFood.Weight = combo.Count * 0.5f; // TODO: make this dynamic
             newFood.Value = (uint)(combo.Count * 15); // TODO: make this dynamic
-            // TODO: check if this works lol - also look into sorting meals so that the model prefers Meat -> Veggies -> Flour
-            var primeIngredientKey = combo[0].Id;
-            if (combo[0].ModelData != null)
-            {
-                newFood.Model = combo[0].ModelData.DeepCopy();
-            }
-            // Fallback to a hardcoded baseline model if the ingredient is an alchemy item (like Garlic) lacking a standard food model
-            else
-            {
-                newFood.Model = new Model { File = @"clutter\food\potatobaked.nif" };
-                // NOTE: THIS DOES NOT WORK I'M COMMENTING THIS OUT BECAUSE THE OUTPUT LOG IS HUGE
-                Console.WriteLine($"Warning: {combo[0].Name} does not have a model to copy, using fallback."); // TODO: delete after testing
-            }
+            // // TODO: check if this works lol - also look into sorting meals so that the model prefers Meat -> Veggies -> Flour
+            // var primeIngredientKey = combo[0].Id;
+            // if (combo[0].ModelData != null)
+            // {
+            //     newFood.Model = combo[0].ModelData.DeepCopy();
+            // }
+            // // Fallback to a hardcoded baseline model if the ingredient is an alchemy item (like Garlic) lacking a standard food model
+            // else
+            // {
+            //     newFood.Model = new Model { File = @"clutter\food\potatobaked.nif" };
+            //     // NOTE: THIS DOES NOT WORK I'M COMMENTING THIS OUT BECAUSE THE OUTPUT LOG IS HUGE
+            //     Console.WriteLine($"Warning: {combo[0].Name} does not have a model to copy, using fallback."); // TODO: delete after testing
+            // }
+            newFood.Model = universalMealModel.DeepCopy();
             newFood.Flags |= Ingestible.Flag.FoodItem;
 
             // Attach Base Health Effect
@@ -320,6 +367,15 @@ public class Program
                 newRecipe.Items ??= new Noggog.ExtendedList<ContainerEntry>();
                 newRecipe.Items.Add(reqItem);
             }
+
+            // --- ADD CSV ROW EXPORT ---
+            string mealName = newFood.Name?.String ?? "Unknown Meal";
+            string effectName = activeBuffId.HasValue && effectNames.TryGetValue(activeBuffId.Value, out var eName) ? eName : "None";
+            string ing1 = combo.Count > 0 ? combo[0].Name : "";
+            string ing2 = combo.Count > 1 ? combo[1].Name : "";
+            string ing3 = combo.Count > 2 ? combo[2].Name : "";
+
+            csvWriter.WriteLine($"{mealName},{totalHp},{effectName},{buffMagnitude},{buffDuration},{ing1},{ing2},{ing3},{newFood.Weight},{newFood.Value}");
         }
 
         // Write the mod to disk!
@@ -328,6 +384,27 @@ public class Program
         patchMod.WriteToBinary(outputPath);
 
         Console.WriteLine("Done! Mod successfully created.");
+    }
+
+    // A simple helper to determine the culinary tag based on the ingredient name for more flavorful meal name generation
+    private static CulinaryTag DetermineTag(string name)
+    {
+        return name.ToLower() switch
+        {
+            "chicken breast" or "horse meat" or "leg of goat" or "pheasant breast" or
+            "raw beef" or "raw rabbit leg" or "venison" or "mammoth snout" or "horker meat"
+                => CulinaryTag.Meat,
+            "mudcrab legs" or "salmon meat" => CulinaryTag.Seafood,
+            "red apple" or "green apple" or "tomato" => CulinaryTag.Fruit,
+            "cabbage" or "carrot" or "leek" => CulinaryTag.Vegetable,
+            "potato" => CulinaryTag.Tuber,
+            "eidar cheese wheel" => CulinaryTag.Dairy,
+            "garlic" => CulinaryTag.Aromatic,
+            "sack of flour" => CulinaryTag.Grain,
+            "ale" => CulinaryTag.Drink,
+            "charred skeever hide" => CulinaryTag.Monster,
+            _ => CulinaryTag.Vegetable // Fallback
+        };
     }
 
     // A simple helper to determine the ingredient type based on the name
@@ -384,20 +461,99 @@ public class Program
         }
     }
 
-    // A simple helper to make the names look somewhat natural
+    // A more flavorful meal name generator that uses the ingredient types and tags to create unique names for each meal combination
     public static string GenerateMealName(List<CookingItem> ingredients)
     {
+        // 1. Calculate the Prefix
+        string prefix = "Hearty"; // Default for pure-filler meals
+        var bufferItem = ingredients.FirstOrDefault(i => i.Type == IngredientType.Buffer);
+
+        if (bufferItem.Name != null && BufferPrefixes.TryGetValue(bufferItem.Name, out var matchedPrefix))
+        {
+            prefix = matchedPrefix;
+        }
+
+        // 2. Filter for The Skeever Exception (Monster Tag Override)
+        if (ingredients.Any(i => i.Tag == CulinaryTag.Monster))
+        {
+            return $"{prefix} Suspicious Stew";
+        }
+
+        // 3. Filter for Single-Ingredient Meals (Just one item in the pot)
         if (ingredients.Count == 1)
-            return $"Cooked {ingredients[0].Name}";
+        {
+            var singleItem = ingredients[0];
 
-        var distinctNames = ingredients.Select(i => i.Name).Distinct().ToList();
+            // If it's a standard Filler (No buffs)
+            if (singleItem.Type == IngredientType.Filler)
+            {
+                if (singleItem.Tag == CulinaryTag.Meat)
+                    return "Cooked Meat Skewer";
 
-        if (distinctNames.Count == 1)
-            return $"Hearty {distinctNames[0]} Meal";
+                return $"Cooked {singleItem.Name}"; // e.g., "Cooked Potato"
+            }
 
-        if (distinctNames.Count == 2)
-            return $"{distinctNames[0]} and {distinctNames[1]}";
+            // If it's a single Buffer (Has a buff)
+            return $"{prefix} Cooked {singleItem.Name}"; // e.g., "Chilling Cooked Tomato"
+        }
 
-        return "Mixed Skewer";
+        // 4. Filter for Purebreds (3 of the exact same item)
+        if (ingredients.Count == 3 && ingredients.All(i => i.Name == ingredients[0].Name))
+        {
+            string pureName = ingredients[0].Name.ToLower();
+            if (pureName == "potato") return $"{prefix} Mashed Potatoes";
+            if (pureName.Contains("apple")) return $"{prefix} Simmered Compote";
+            if (pureName == "tomato") return $"{prefix} Salsa";
+            if (pureName.Contains("cheese")) return $"{prefix} Cheese Fondue";
+            if (pureName == "ale") return $"{prefix} Mulled Ale";
+            if (ingredients[0].Tag == CulinaryTag.Meat) return $"{prefix} Generous Meat Skewer";
+        }
+
+        // 5. Extract Distinct Tags for the Matrix
+        var tags = ingredients.Select(i => i.Tag).Distinct().ToList();
+
+        // 7. The Structural Modifiers (Flour overrides everything else)
+        if (tags.Contains(CulinaryTag.Grain))
+        {
+            if (tags.Contains(CulinaryTag.Meat)) return $"{prefix} Meat Pie";
+            if (tags.Contains(CulinaryTag.Fruit)) return $"{prefix} Pastry";
+            if (tags.Contains(CulinaryTag.Vegetable) || tags.Contains(CulinaryTag.Tuber)) return $"{prefix} Dumplings";
+            if (tags.Contains(CulinaryTag.Dairy)) return $"{prefix} Cheese Bread";
+            return $"{prefix} Baked Goods"; // Fallback for weird flour combos
+        }
+
+        // 8. The Standard Meal Intersections
+        if (tags.Contains(CulinaryTag.Meat) && tags.Contains(CulinaryTag.Seafood))
+            return $"{prefix} Surf and Turf";
+
+        if (tags.Contains(CulinaryTag.Seafood) && (tags.Contains(CulinaryTag.Vegetable) || tags.Contains(CulinaryTag.Fruit) || tags.Contains(CulinaryTag.Tuber)))
+            return $"{prefix} Seafood Chowder";
+
+        if (tags.Contains(CulinaryTag.Meat) && (tags.Contains(CulinaryTag.Vegetable) || tags.Contains(CulinaryTag.Fruit) || tags.Contains(CulinaryTag.Tuber)))
+            return $"{prefix} Meat Stew";
+
+        if (tags.Contains(CulinaryTag.Drink)) // Ale + Something else
+        {
+            if (tags.Contains(CulinaryTag.Meat)) return $"{prefix} Braised Meat";
+            if (tags.Contains(CulinaryTag.Seafood)) return $"{prefix} Braised Seafood";
+            return $"{prefix} Tavern Braise";
+        }
+
+        if (tags.Contains(CulinaryTag.Aromatic)) // Garlic + Something else
+        {
+            if (tags.Contains(CulinaryTag.Meat)) return $"{prefix} Garlic-Buttered Meat";
+            if (tags.Contains(CulinaryTag.Seafood)) return $"{prefix} Garlic-Buttered Seafood";
+            if (tags.Contains(CulinaryTag.Tuber)) return $"{prefix} Garlic-Roasted Potatoes";
+        }
+
+        // 7. Base Category Fallbacks (If it's just 2 of the same tag, or tags that didn't trigger a special intersection)
+        if (tags.Contains(CulinaryTag.Meat)) return $"{prefix} Meat Skewer";
+        if (tags.Contains(CulinaryTag.Seafood)) return $"{prefix} Seafood Skewer";
+        if (tags.Contains(CulinaryTag.Dairy)) return $"{prefix} Cheesy Meal";
+        if (tags.Contains(CulinaryTag.Vegetable) || tags.Contains(CulinaryTag.Tuber)) return $"{prefix} Veggie Medley";
+        if (tags.Contains(CulinaryTag.Fruit)) return $"{prefix} Fruit Simmer";
+
+        // Ultimate Fallback (Should rarely be hit with our 6 combo rules)
+        return $"{prefix} Mixed Meal";
     }
 }
