@@ -31,6 +31,7 @@ public struct CookingItem
     public FormKey Id;
     public IReadOnlyList<IEffectGetter> Effects;
     public IngredientType Type;
+    public Model? ModelData;
 }
 
 // A simple struct to hold the relevant data for the effects we want to apply to the generated food items
@@ -71,17 +72,6 @@ public class Program
         targetNames.UnionWith(buffers);
         targetNames.Add("Sack of Flour");
 
-        // For reference, this is the original list/logic of 23 core ingredients I wanted to include.
-        // var targetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        // {
-        //     "Ale", "Cabbage", "Carrot", "Charred Skeever Hide",
-        //     "Chicken Breast", "Eidar Cheese Wheel", "Garlic", "Green Apple",
-        //     "Horker Meat", "Horse Meat", "Leek", "Leg of Goat",
-        //     "Mammoth Snout", "Mudcrab Legs", "Pheasant Breast", "Potato",
-        //     "Raw Beef", "Raw Rabbit Leg", "Red Apple", "Sack of Flour",
-        //     "Salmon Meat", "Tomato", "Venison"
-        // };
-
         var validIngredients = new List<CookingItem>();
 
         // --- DATA INGESTION ---
@@ -102,7 +92,8 @@ public class Program
                         Name = food.Name.String,
                         Id = food.FormKey,
                         Effects = food.Effects,
-                        Type = DetermineType(food.Name.String, fillers, buffers)
+                        Type = DetermineType(food.Name.String, fillers, buffers),
+                        ModelData = food.Model?.DeepCopy()
                     });
                     Console.WriteLine($"Ingested Food: {food.Name} ({validIngredients.Last().Type})");
                 }
@@ -118,7 +109,8 @@ public class Program
                         Name = ingredient.Name.String,
                         Id = ingredient.FormKey,
                         Effects = ingredient.Effects,
-                        Type = DetermineType(ingredient.Name.String, fillers, buffers)
+                        Type = DetermineType(ingredient.Name.String, fillers, buffers),
+                        ModelData = ingredient.Model?.DeepCopy()
                     });
                     Console.WriteLine($"Ingested Ingredient: {ingredient.Name} ({validIngredients.Last().Type})");
                 }
@@ -261,21 +253,22 @@ public class Program
             // --- CREATE THE NEW FOOD ITEM ---
             var newFood = patchMod.Ingestibles.AddNew();
             newFood.EditorID = $"BOTW_Food_{recipeCount}";
+            // TODO: add eating sound effect
             newFood.Name = GenerateMealName(combo);
             newFood.Weight = combo.Count * 0.5f; // TODO: make this dynamic
             newFood.Value = (uint)(combo.Count * 15); // TODO: make this dynamic
             // TODO: check if this works lol - also look into sorting meals so that the model prefers Meat -> Veggies -> Flour
             var primeIngredientKey = combo[0].Id;
-            if (patchMod.Ingestibles.TryGetValue(primeIngredientKey, out var vanillaFood) && vanillaFood.Model != null)
+            if (combo[0].ModelData != null)
             {
-                newFood.Model = vanillaFood.Model.DeepCopy();
+                newFood.Model = combo[0].ModelData.DeepCopy();
             }
             // Fallback to a hardcoded baseline model if the ingredient is an alchemy item (like Garlic) lacking a standard food model
             else
             {
                 newFood.Model = new Model { File = @"clutter\food\potatobaked.nif" };
                 // NOTE: THIS DOES NOT WORK I'M COMMENTING THIS OUT BECAUSE THE OUTPUT LOG IS HUGE
-                //Console.WriteLine($"Warning: {combo[0].Name} does not have a model to copy, using fallback."); // TODO: delete after testing
+                Console.WriteLine($"Warning: {combo[0].Name} does not have a model to copy, using fallback."); // TODO: delete after testing
             }
             newFood.Flags |= Ingestible.Flag.FoodItem;
 
