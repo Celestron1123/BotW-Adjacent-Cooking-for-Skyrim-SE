@@ -57,9 +57,9 @@ public class Program
     {
         { "Ale", "Invigorating" }, { "Cabbage", "Enduring" }, { "Carrot", "Keen-Eyed" },
         { "Charred Skeever Hide", "Gritty" }, { "Eidar Cheese Wheel", "Ironclad" },
-        { "Garlic", "Revitalizing" }, { "Green Apple", "Tireless" }, { "Horker Meat", "Warming" },
+        { "Garlic", "Revitalizing" }, { "Green Apple", "Tireless" }, { "Horker Meat", "Spicy" },
         { "Leek", "Mystic" }, { "Mudcrab Legs", "Mighty" }, { "Salmon Meat", "Amphibious" },
-        { "Tomato", "Cooling" }
+        { "Tomato", "Chilly" }
     };
 
     // Entry Point
@@ -182,20 +182,23 @@ public class Program
         // static FormKey for the Cooking Pot
         var cookingPotKeyword = new FormKey("Skyrim.esm", 0x0A5CB3);
 
+        // static FormKey for the vanilla eating sound descriptor
+        var eatSoundDescriptor = new FormKey("Skyrim.esm", 0xcaf94);
+
         // static FormKeys for all other effects via buffers
         var effectRestoreHealth = new FormKey("Skyrim.esm", 0x03EB15); // AlchRestoreHealth
-        var effectStaminaRegen = new FormKey("Skyrim.esm", 0x03EBA3); // AlchRegenStamina
+        var effectStaminaRegen = new FormKey("Skyrim.esm", 0x03EB08); // AlchRegenStamina
         var effectCarryWeight = new FormKey("Skyrim.esm", 0x03EB01); // AlchFortifyCarryWeight
-        var effectArcheryUp = new FormKey("Skyrim.esm", 0x03EB0D); // AlchFortifyMarksman
-        var effectResistPoison = new FormKey("Skyrim.esm", 0x03EAE6); // AlchResistPoison
-        var effectFortifyArmor = new FormKey("Skyrim.esm", 0x03EAE9); // AlchFortifyHeavyArmor
-        var effectHealthRegen = new FormKey("Skyrim.esm", 0x03EB17); // AlchRegenHealth
-        var effectFortifyStam = new FormKey("Skyrim.esm", 0x03EBA5); // AlchFortifyStamina
-        var effectResistFrost = new FormKey("Skyrim.esm", 0x03EAE3); // AlchResistFrost
-        var effectFortifyMag = new FormKey("Skyrim.esm", 0x03EAEB); // AlchFortifyMagicka
-        var effectFortifyMelee = new FormKey("Skyrim.esm", 0x03EB0B); // AlchFortifyOneHanded 
-        var effectWaterbreath = new FormKey("Skyrim.esm", 0x03EAC1); // AlchWaterbreathing
-        var effectResistFire = new FormKey("Skyrim.esm", 0x03EAE1); // AlchResistFire
+        var effectArcheryUp = new FormKey("Skyrim.esm", 0x03EB1B); // AlchFortifyMarksman
+        var effectResistPoison = new FormKey("Skyrim.esm", 0x090041); // AlchResistPoison
+        var effectFortifyArmor = new FormKey("Skyrim.esm", 0x03EB1E); // AlchFortifyHeavyArmor
+        var effectHealthRegen = new FormKey("Skyrim.esm", 0x03EB06); // AlchRegenHealth
+        var effectFortifyStam = new FormKey("Skyrim.esm", 0x03EAF9); // AlchFortifyStamina
+        var effectResistFrost = new FormKey("Skyrim.esm", 0x03EAEB); // AlchResistFrost
+        var effectFortifyMag = new FormKey("Skyrim.esm", 0x03EAF8); // AlchFortifyMagicka
+        var effectFortifyMelee = new FormKey("Skyrim.esm", 0x03EB19); // AlchFortifyOneHanded
+        var effectWaterbreath = new FormKey("Skyrim.esm", 0x03AC2D); // AlchWaterbreathing
+        var effectResistFire = new FormKey("Skyrim.esm", 0x03EAEA); // AlchResistFire
 
         // CSV Output for Testing
         var effectNames = new Dictionary<FormKey, string>()
@@ -215,7 +218,6 @@ public class Program
             { effectResistFire, "Resist Fire" }
         };
 
-        // TODO: make a mapping for price?
         // A simple mapping of filler ingredients to their HP values for the Restore Health effect magnitude calculation
         var fillerHpValues = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
@@ -266,11 +268,7 @@ public class Program
             {
                 if (item.Type == IngredientType.Filler)
                 {
-                    totalHp += fillerHpValues.TryGetValue(item.Name, out int hp) ? hp : 1; //TODO: maybe delete this after testing
-                    if (hp == 1)
-                    {
-                        Console.WriteLine($"Warning: {item.Name} not found in HP mapping, defaulting to 1 HP.");
-                    }
+                    totalHp += fillerHpValues[item.Name];
                 }
                 else if (item.Type == IngredientType.Buffer)
                 {
@@ -299,25 +297,13 @@ public class Program
             // --- CREATE THE NEW FOOD ITEM ---
             var newFood = patchMod.Ingestibles.AddNew();
             newFood.EditorID = $"BOTW_Food_{recipeCount}";
-            // TODO: add eating sound effect
+            newFood.ConsumeSound.SetTo(eatSoundDescriptor); // TODO: fix this
             newFood.Name = GenerateMealName(combo);
             newFood.Weight = combo.Count * 0.5f; // TODO: make this dynamic
             newFood.Value = (uint)(combo.Count * 15); // TODO: make this dynamic
-            // // TODO: check if this works lol - also look into sorting meals so that the model prefers Meat -> Veggies -> Flour
-            // var primeIngredientKey = combo[0].Id;
-            // if (combo[0].ModelData != null)
-            // {
-            //     newFood.Model = combo[0].ModelData.DeepCopy();
-            // }
-            // // Fallback to a hardcoded baseline model if the ingredient is an alchemy item (like Garlic) lacking a standard food model
-            // else
-            // {
-            //     newFood.Model = new Model { File = @"clutter\food\potatobaked.nif" };
-            //     // NOTE: THIS DOES NOT WORK I'M COMMENTING THIS OUT BECAUSE THE OUTPUT LOG IS HUGE
-            //     Console.WriteLine($"Warning: {combo[0].Name} does not have a model to copy, using fallback."); // TODO: delete after testing
-            // }
-            newFood.Model = universalMealModel.DeepCopy();
+            newFood.Model = universalMealModel.DeepCopy(); // TODO: make this dynamic
             newFood.Flags |= Ingestible.Flag.FoodItem;
+            newFood.Flags |= Ingestible.Flag.NoAutoCalc;
 
             // Attach Base Health Effect
             var hpEffect = new Effect();
