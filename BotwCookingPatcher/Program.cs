@@ -4,7 +4,7 @@
 // game data and create a new plugin with the generated content.
 //
 // Author: Elijah Potter
-// Date: May 24, 2026
+// Date: May 29, 2026
 
 using System;
 using System.Collections.Generic;
@@ -13,6 +13,7 @@ using System.Linq;
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Skyrim;
 using Mutagen.Bethesda.Plugins;
+using Noggog;
 
 namespace BotwCookingPatcher;
 
@@ -39,6 +40,7 @@ public struct CookingItem
     public IngredientType Type;
     public Model? ModelData;
     public CulinaryTag Tag;
+    public uint Value;
 }
 
 // A simple struct to hold the relevant data for the effects we want to apply to the generated food items
@@ -61,6 +63,8 @@ public class Program
         { "Leek", "Mystic" }, { "Mudcrab Legs", "Mighty" }, { "Salmon Meat", "Amphibious" },
         { "Tomato", "Chilly" }
     };
+
+    public static List<Model?> foodModels = [];
 
     // Entry Point
     public static void Main()
@@ -88,10 +92,28 @@ public class Program
         targetNames.UnionWith(fillers);
         targetNames.UnionWith(buffers);
         targetNames.Add("Sack of Flour");
-
         var validIngredients = new List<CookingItem>();
-        Model? universalMealModel = null;
+
+        // Model form keys
         var stewFormKey = new FormKey("Skyrim.esm", 0x000EBA01);
+        var horkerLoafFormKey = new FormKey("Skyrim.esm", 0x0007224E);
+        var homeCookedMealFormKey = new FormKey("Skyrim.esm", 0x00064B43);
+        var chickenDumplingFormKey = new FormKey("HearthFires.esm", 0x000117ff);
+        var horseHaunchFormKey = new FormKey("Skyrim.esm", 0x000722B0);
+        var tankardFormKey = new FormKey("Skyrim.esm", 0x000319E3);
+        var bakedPotatoesFormKey = new FormKey("Skyrim.esm", 0x00064B3A);
+
+        // The actual models
+        Model? stew = null;
+        Model? horkerLoaf = null;
+        Model? homeCookedMeal = null;
+        Model? chickenDumpling = null;
+        Model? horseHaunch = null;
+        Model? tankard = null;
+        Model? bakedPotatoes = null;
+
+        // add a dummy so the starting index is 1 LOL
+        foodModels.Add(null);
 
         // --- DATA INGESTION ---
         // Load the plugins and extract the relevant ingredients and food items
@@ -99,19 +121,59 @@ public class Program
         {
             var pluginPath = Path.Combine(dataPath, pluginName);
             Console.WriteLine($"Parsing {pluginName}...");
-            var mod = SkyrimMod.CreateFromBinary(pluginPath, SkyrimRelease.SkyrimSE);
+            var skyrim = SkyrimMod.CreateFromBinary(pluginPath, SkyrimRelease.SkyrimSE);
 
             if (pluginName == "Skyrim.esm")
             {
-                if (mod.Ingestibles.TryGetValue(stewFormKey, out var appleCabbageStew) && appleCabbageStew.Model != null)
+                if (skyrim.Ingestibles.TryGetValue(stewFormKey, out var appleCabbageStew) && appleCabbageStew.Model != null)
                 {
-                    universalMealModel = appleCabbageStew.Model.DeepCopy();
-                    Console.WriteLine("Successfully cached Apple Cabbage Stew model.");
+                    stew = appleCabbageStew.Model.DeepCopy();
+                    foodModels.Add(stew);
+                    Console.WriteLine("1 Successfully cached Apple Cabbage Stew model. Index: " + (foodModels.Count - 1));
+                }
+                if (skyrim.Ingestibles.TryGetValue(horkerLoafFormKey, out var horker) && horker.Model != null)
+                {
+                    horkerLoaf = horker.Model.DeepCopy();
+                    foodModels.Add(horkerLoaf);
+                    Console.WriteLine("2 Successfully cached Horker Loaf model. Index: " + (foodModels.Count - 1));
+                }
+                if (skyrim.Ingestibles.TryGetValue(homeCookedMealFormKey, out var home) && home.Model != null)
+                {
+                    homeCookedMeal = home.Model.DeepCopy();
+                    foodModels.Add(homeCookedMeal);
+                    Console.WriteLine("3 Successfully cached Home Cooked Meal model. Index: " + (foodModels.Count - 1));
+                }
+                if (skyrim.Ingestibles.TryGetValue(horseHaunchFormKey, out var hors) && hors.Model != null)
+                {
+                    horseHaunch = hors.Model.DeepCopy();
+                    foodModels.Add(horseHaunch);
+                    Console.WriteLine("4 Successfully cached horse haunch model. Index: " + (foodModels.Count - 1));
+                }
+                if (skyrim.MiscItems.TryGetValue(tankardFormKey, out var tank) && tank.Model != null)
+                {
+                    tankard = tank.Model.DeepCopy();
+                    foodModels.Add(tankard);
+                    Console.WriteLine("5 Successfully cached Tankard model. Index: " + (foodModels.Count - 1));
+                }
+                if (skyrim.Ingestibles.TryGetValue(bakedPotatoesFormKey, out var potat) && potat.Model != null)
+                {
+                    bakedPotatoes = potat.Model.DeepCopy();
+                    foodModels.Add(bakedPotatoes);
+                    Console.WriteLine("6 Successfully cached Potato model. Index: " + (foodModels.Count - 1));
+                }
+            }
+            else if (pluginName == "HearthFires.esm")
+            {
+                if (skyrim.Ingestibles.TryGetValue(chickenDumplingFormKey, out var dump) && dump.Model != null)
+                {
+                    chickenDumpling = dump.Model.DeepCopy();
+                    foodModels.Add(chickenDumpling);
+                    Console.WriteLine("7 Successfully cached Chicken Dumpling model. Index: " + (foodModels.Count - 1));
                 }
             }
 
             // Scan the Food table
-            foreach (var food in mod.Ingestibles)
+            foreach (var food in skyrim.Ingestibles)
             {
                 if (food.Name != null && targetNames.Remove(food.Name.String))
                 {
@@ -122,14 +184,15 @@ public class Program
                         Effects = food.Effects,
                         Type = DetermineType(food.Name.String, fillers, buffers),
                         ModelData = food.Model?.DeepCopy(),
-                        Tag = DetermineTag(food.Name.String)
+                        Tag = DetermineTag(food.Name.String),
+                        Value = food.Value
                     });
                     Console.WriteLine($"Ingested Food: {food.Name} ({validIngredients.Last().Type})");
                 }
             }
 
             // Scan the Alchemy Ingredient table
-            foreach (var ingredient in mod.Ingredients)
+            foreach (var ingredient in skyrim.Ingredients)
             {
                 if (ingredient.Name != null && targetNames.Remove(ingredient.Name.String))
                 {
@@ -140,7 +203,8 @@ public class Program
                         Effects = ingredient.Effects,
                         Type = DetermineType(ingredient.Name.String, fillers, buffers),
                         ModelData = ingredient.Model?.DeepCopy(),
-                        Tag = DetermineTag(ingredient.Name.String)
+                        Tag = DetermineTag(ingredient.Name.String),
+                        Value = ingredient.Value
                     });
                     Console.WriteLine($"Ingested Ingredient: {ingredient.Name} ({validIngredients.Last().Type})");
                 }
@@ -248,7 +312,7 @@ public class Program
         // --- ADD CSV SETUP ---
         var csvPath = Path.Combine(desktopPath, "GeneratedMeals.csv");
         using var csvWriter = new StreamWriter(csvPath);
-        csvWriter.WriteLine("MealName,+HP,Effect,EffectMagnitude,EffectDuration,Ingredient1,Ingredient2,Ingredient3,Weight,Price");
+        csvWriter.WriteLine("MealName,Healing,Effect,EffectMagnitude,EffectDuration,Ingredient1,Ingredient2,Ingredient3,Weight,Price");
 
         int recipeCount = 0;
 
@@ -297,11 +361,12 @@ public class Program
             // --- CREATE THE NEW FOOD ITEM ---
             var newFood = patchMod.Ingestibles.AddNew();
             newFood.EditorID = $"BOTW_Food_{recipeCount}";
-            newFood.ConsumeSound.SetTo(eatSoundDescriptor); // TODO: fix this
+            newFood.ConsumeSound.SetTo(eatSoundDescriptor);
             newFood.Name = GenerateMealName(combo);
-            newFood.Weight = combo.Count * 0.5f; // TODO: make this dynamic
-            newFood.Value = (uint)(combo.Count * 15); // TODO: make this dynamic
-            newFood.Model = universalMealModel.DeepCopy(); // TODO: make this dynamic
+            newFood.Weight = combo.Count * 0.5f;
+            uint baseValue = (uint)combo.Sum(i => i.Value);
+            newFood.Value = (uint)(baseValue * 1.5);
+            newFood.Model = DetermineModel(combo, newFood.Name.String);
             newFood.Flags |= Ingestible.Flag.FoodItem;
             newFood.Flags |= Ingestible.Flag.NoAutoCalc;
 
@@ -356,12 +421,14 @@ public class Program
 
             // --- ADD CSV ROW EXPORT ---
             string mealName = newFood.Name?.String ?? "Unknown Meal";
-            string effectName = activeBuffId.HasValue && effectNames.TryGetValue(activeBuffId.Value, out var eName) ? eName : "None";
+            string effectName = activeBuffId.HasValue && effectNames.TryGetValue(activeBuffId.Value, out var eName) ? eName : "";
+            string magnitudeStr = activeBuffId.HasValue ? buffMagnitude.ToString() : "";
+            string durationStr = activeBuffId.HasValue ? buffDuration.ToString() : "";
             string ing1 = combo.Count > 0 ? combo[0].Name : "";
             string ing2 = combo.Count > 1 ? combo[1].Name : "";
             string ing3 = combo.Count > 2 ? combo[2].Name : "";
 
-            csvWriter.WriteLine($"{mealName},{totalHp},{effectName},{buffMagnitude},{buffDuration},{ing1},{ing2},{ing3},{newFood.Weight},{newFood.Value}");
+            csvWriter.WriteLine($"{mealName},{totalHp},{effectName},{magnitudeStr},{durationStr},{ing1},{ing2},{ing3},{newFood.Weight},{newFood.Value}");
         }
 
         // Write the mod to disk!
@@ -370,6 +437,49 @@ public class Program
         patchMod.WriteToBinary(outputPath);
 
         Console.WriteLine("Done! Mod successfully created.");
+    }
+
+    // A helper to assign food models :)))
+    private static Model? DetermineModel(List<CookingItem> ingredients, string mealName)
+    {
+        string nameLower = mealName.ToLower();
+
+        // 1. Tankard (Pure Drinks)
+        if (ingredients.All(x => x.Tag == CulinaryTag.Drink))
+        {
+            return foodModels[5]; // tankard
+        }
+        // 2. Skewer (or Horker Loaf)
+        else if (nameLower.Contains("skewer"))
+        {
+            return foodModels[2]; // horker loaf
+        }
+        // 3. Rustic Pie (Grain + Meat or Fruit)
+        else if (ingredients.Any(x => x.Tag == CulinaryTag.Grain) &&
+                 ingredients.Any(x => x.Tag == CulinaryTag.Meat || x.Tag == CulinaryTag.Fruit))
+        {
+            return foodModels[3]; // pie
+        }
+        // 4. Dumpling / Bread Board (Grain WITHOUT Meat/Fruit - caught by the statement above)
+        else if (ingredients.Any(x => x.Tag == CulinaryTag.Grain))
+        {
+            return foodModels[7]; // dumpling
+        }
+        // 5. Plated Roast
+        else if ((nameLower.Contains("surf and turf") || nameLower.Contains("braised") || nameLower.Contains("garlic")) &&
+                 ingredients.Any(x => x.Tag == CulinaryTag.Meat || x.Tag == CulinaryTag.Seafood))
+        {
+            return foodModels[4]; // roast
+        }
+        // 6. Side Plate
+        else if (ingredients.All(x => x.Tag == CulinaryTag.Fruit || x.Tag == CulinaryTag.Vegetable || x.Tag == CulinaryTag.Tuber || x.Tag == CulinaryTag.Dairy) ||
+                (ingredients.Count == 1 && ingredients[0].Tag != CulinaryTag.Meat))
+        {
+            return foodModels[6]; // side plate
+        }
+
+        // 7. Wooden Bowl (Stews, Chowders, Suspicious Stew, and Universal Fallback)
+        return foodModels[1]; // stew
     }
 
     // A simple helper to determine the culinary tag based on the ingredient name for more flavorful meal name generation
